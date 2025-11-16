@@ -1,0 +1,4 @@
+INSERT INTO teams (name) 
+VALUES ($1) 
+ON CONFLICT (name) DO NOTHING
+RETURNING id;

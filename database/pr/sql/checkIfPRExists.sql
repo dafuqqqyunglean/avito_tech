@@ -1,0 +1,1 @@
+SELECT EXISTS(SELECT 1 FROM pull_requests WHERE id = $1)

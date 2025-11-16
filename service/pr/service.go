@@ -1,4 +1,4 @@
-package prserv
+package pr
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func (s *impl) Create(ctx context.Context, pr domain.CreatePRRequest) (domain.Cr
 		return domain.CreatePRResponse{}, domain.ErrBadRequest
 	}
 
-	resp, err := s.repo.Create(ctx, pr)
+	resp, err := s.repo.Create(ctx, pr.PRID, pr.PRName, pr.AuthorID)
 	if err != nil {
 		slog.Error("failed to create pull request",
 			"pr_id", pr.PRID,

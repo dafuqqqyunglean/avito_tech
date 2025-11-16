@@ -1,4 +1,4 @@
-package userserv
+package user
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func (s *impl) SetActive(ctx context.Context, req domain.SetActiveRequest) (doma
 		return domain.SetActiveResponse{}, domain.ErrBadRequest
 	}
 
-	user, err := s.repo.SetActive(ctx, req)
+	user, err := s.repo.SetActive(ctx, req.UserID, req.IsActive)
 	if err != nil {
 		slog.Error("failed to set user active status",
 			"user_id", req.UserID,

@@ -13,9 +13,9 @@ import (
 	prrepo "github.com/dafuqqqyunglean/avito_tech/database/pr"
 	teamrepo "github.com/dafuqqqyunglean/avito_tech/database/team"
 	userrepo "github.com/dafuqqqyunglean/avito_tech/database/user"
-	prserv "github.com/dafuqqqyunglean/avito_tech/service/pr"
-	teamserv "github.com/dafuqqqyunglean/avito_tech/service/team"
-	userserv "github.com/dafuqqqyunglean/avito_tech/service/user"
+	"github.com/dafuqqqyunglean/avito_tech/service/pr"
+	"github.com/dafuqqqyunglean/avito_tech/service/team"
+	"github.com/dafuqqqyunglean/avito_tech/service/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -121,9 +121,9 @@ func (a *App) runMigrations(config config.Config) error {
 }
 
 func (a *App) initService(ctx context.Context, db *pgxpool.Pool, server *api.Server) {
-	teamService := teamserv.NewService(teamrepo.NewRepo(db))
-	userService := userserv.NewService(userrepo.NewRepo(db))
-	prService := prserv.NewService(prrepo.NewRepo(db))
+	teamService := team.NewService(teamrepo.NewRepo(db))
+	userService := user.NewService(userrepo.NewRepo(db))
+	prService := pr.NewService(prrepo.NewRepo(db))
 
 	server.HandleRoutes(ctx, teamService, userService, prService)
 }

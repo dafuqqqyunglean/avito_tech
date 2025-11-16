@@ -1,7 +1,8 @@
-package teamrepo
+package team
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 
@@ -11,7 +12,7 @@ import (
 )
 
 type Repository interface {
-	CreateTeam(ctx context.Context, team domain.TeamRequest) (domain.TeamRequest, error)
+	CreateTeam(ctx context.Context, teamName string, members []domain.User) (domain.TeamRequest, error)
 	GetTeam(ctx context.Context, teamName string) (domain.TeamRequest, error)
 }
 
@@ -25,7 +26,16 @@ func NewRepo(db *pgxpool.Pool) Repository {
 	}
 }
 
-func (r *repository) CreateTeam(ctx context.Context, team domain.TeamRequest) (domain.TeamRequest, error) {
+//go:embed sql/createTeam.sql
+var createTeam string
+
+//go:embed sql/createUsers.sql
+var createUsers string
+
+//go:embed sql/putUsersInTeam.sql
+var putUsersInTeam string
+
+func (r *repository) CreateTeam(ctx context.Context, teamName string, members []domain.User) (domain.TeamRequest, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return domain.TeamRequest{}, fmt.Errorf("failed to begin tx: %w", err)
@@ -33,34 +43,23 @@ func (r *repository) CreateTeam(ctx context.Context, team domain.TeamRequest) (d
 	defer tx.Rollback(ctx)
 
 	var teamID int
-	err = tx.QueryRow(ctx, `
-	INSERT INTO teams (name) 
-	VALUES ($1) 
-	ON CONFLICT (name) DO NOTHING
-	RETURNING id;`, team.TeamName).Scan(&teamID)
+	err = tx.QueryRow(ctx, createTeam, teamName).Scan(&teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.TeamRequest{}, domain.ErrTeamExists
 	} else if err != nil {
 		return domain.TeamRequest{}, fmt.Errorf("failed to create team: %w", err)
 	}
 
-	for _, v := range team.Members {
-		_, err := tx.Exec(ctx,
-			`INSERT INTO users (id, username, is_active) 
-			VALUES ($1, $2, $3) 
-			ON CONFLICT (id) DO UPDATE SET 
-    		username = EXCLUDED.username,
-    		is_active = EXCLUDED.is_active;`,
-			v.ID, v.Name, v.IsActive)
+	for _, v := range members {
+		_, err := tx.Exec(ctx, createUsers,
+			v.ID,
+			v.Name,
+			v.IsActive)
 		if err != nil {
 			return domain.TeamRequest{}, fmt.Errorf("failed to create/update user: %w", err)
 		}
 
-		_, err = tx.Exec(ctx,
-			`INSERT INTO team_members (team_id, user_id) 
-			VALUES ($1, $2) 
-			ON CONFLICT (team_id, user_id) DO NOTHING;`,
-			teamID, v.ID)
+		_, err = tx.Exec(ctx, putUsersInTeam, teamID, v.ID)
 		if err != nil {
 			return domain.TeamRequest{}, fmt.Errorf("failed to add user to team: %w", err)
 		}
@@ -71,20 +70,14 @@ func (r *repository) CreateTeam(ctx context.Context, team domain.TeamRequest) (d
 		return domain.TeamRequest{}, fmt.Errorf("failed to commit changes: %w", err)
 	}
 
-	return team, nil
+	return domain.TeamRequest{TeamName: teamName, Members: members}, nil
 }
 
+//go:embed sql/getTeamMembers.sql
+var getTeamMembers string
+
 func (r *repository) GetTeam(ctx context.Context, teamName string) (domain.TeamRequest, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT 
-            u.id as user_internal_id,
-            u.username,
-            u.is_active
-         FROM teams t
-         JOIN team_members tm ON t.id = tm.team_id
-         JOIN users u ON tm.user_id = u.id
-         WHERE t.name = $1
-         ORDER BY u.id;`, teamName)
+	rows, err := r.db.Query(ctx, getTeamMembers, teamName)
 	if err != nil {
 		return domain.TeamRequest{}, fmt.Errorf("failed to query team: %w", err)
 	}
@@ -95,11 +88,7 @@ func (r *repository) GetTeam(ctx context.Context, teamName string) (domain.TeamR
 		Members:  []domain.User{},
 	}
 
-	found := false
-
 	for rows.Next() {
-		found = true
-
 		var userID string
 		var username string
 		var isActive bool
@@ -119,7 +108,7 @@ func (r *repository) GetTeam(ctx context.Context, teamName string) (domain.TeamR
 		return domain.TeamRequest{}, fmt.Errorf("rows iteration error: %w", err)
 	}
 
-	if !found {
+	if len(team.Members) == 0 {
 		return domain.TeamRequest{}, domain.ErrNotFound
 	}
 

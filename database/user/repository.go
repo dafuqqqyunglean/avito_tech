@@ -1,7 +1,8 @@
-package userrepo
+package user
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 
@@ -11,7 +12,7 @@ import (
 )
 
 type Repository interface {
-	SetActive(ctx context.Context, req domain.SetActiveRequest) (domain.SetActiveResponse, error)
+	SetActive(ctx context.Context, userID string, isActive bool) (domain.SetActiveResponse, error)
 	GetReview(ctx context.Context, userID string) (domain.GetReviewResponse, error)
 }
 
@@ -25,40 +26,42 @@ func NewRepo(db *pgxpool.Pool) Repository {
 	}
 }
 
-func (r *repository) SetActive(ctx context.Context, req domain.SetActiveRequest) (domain.SetActiveResponse, error) {
+//go:embed sql/setUserActive.sql
+var setUserActive string
+
+//go:embed sql/getTeamName.sql
+var getTeamName string
+
+func (r *repository) SetActive(ctx context.Context, userID string, isActive bool) (domain.SetActiveResponse, error) {
 	var user domain.SetActiveResponse
-	err := r.db.QueryRow(ctx, `
-		UPDATE users SET is_active = $2
-		WHERE id = $1
-		RETURNING id, username, is_active;`,
-		req.UserID, req.IsActive).Scan(&user.UserID, &user.Username, &user.IsActive)
+	err := r.db.QueryRow(ctx, setUserActive,
+		userID,
+		isActive).Scan(&user.UserID,
+		&user.Username,
+		&user.IsActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SetActiveResponse{}, domain.ErrNotFound
-	} else if err != nil {
+	}
+	if err != nil {
 		return domain.SetActiveResponse{}, fmt.Errorf("failed to set active status: %w", err)
 	}
 
-	err = r.db.QueryRow(ctx, `
-        SELECT t.name 
-        FROM teams t
-        JOIN team_members tm ON t.id = tm.team_id
-        WHERE tm.user_id = $1;`,
-		req.UserID).Scan(&user.TeamName)
+	err = r.db.QueryRow(ctx, getTeamName,
+		userID).Scan(&user.TeamName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SetActiveResponse{}, domain.ErrNotFound
-	} else if err != nil {
+	}
+	if err != nil {
 		return domain.SetActiveResponse{}, fmt.Errorf("failed to get user team: %w", err)
 	}
 
 	return user, nil
 }
 
+var getPR string
+
 func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetReviewResponse, error) {
-	rows, err := r.db.Query(ctx, `
-        SELECT pr.id, pr.name, pr.author_id, pr.status
-        FROM pull_requests pr
-        JOIN pr_reviewers rw ON pr.id = rw.pr_id
-        WHERE rw.user_id = $1;`, userID)
+	rows, err := r.db.Query(ctx, getPR, userID)
 	if err != nil {
 		return domain.GetReviewResponse{}, fmt.Errorf("failed to get user reviews: %w", err)
 	}
@@ -69,11 +72,7 @@ func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetRe
 		PullRequests: []domain.CutPullRequest{},
 	}
 
-	found := false
-
 	for rows.Next() {
-		found = true
-
 		var prID, prName, authorID, status string
 
 		if err := rows.Scan(&prID, &prName, &authorID, &status); err != nil {
@@ -92,7 +91,7 @@ func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetRe
 		return domain.GetReviewResponse{}, fmt.Errorf("rows iteration error: %w", err)
 	}
 
-	if !found {
+	if len(response.PullRequests) == 0 {
 		return domain.GetReviewResponse{}, domain.ErrNotFound
 	}
 

@@ -1,4 +1,4 @@
-package teamserv
+package team
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func (s *impl) CreateTeam(ctx context.Context, req domain.TeamRequest) (domain.T
 		return domain.TeamResponse{}, domain.ErrBadRequest
 	}
 
-	res, err := s.repo.CreateTeam(ctx, req)
+	res, err := s.repo.CreateTeam(ctx, req.TeamName, req.Members)
 	if err != nil {
 		slog.Error("failed to create team",
 			"error", err,
