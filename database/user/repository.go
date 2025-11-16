@@ -58,6 +58,7 @@ func (r *repository) SetActive(ctx context.Context, userID string, isActive bool
 	return user, nil
 }
 
+//go:embed sql/getPR.sql
 var getPR string
 
 func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetReviewResponse, error) {

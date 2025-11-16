@@ -169,11 +169,7 @@ func (r *repository) SetMerged(ctx context.Context, prID string) (domain.MergePR
 		},
 	}
 
-	found := false
-
 	for rows.Next() {
-		found = true
-
 		var (
 			name       string
 			authorID   string
@@ -197,7 +193,7 @@ func (r *repository) SetMerged(ctx context.Context, prID string) (domain.MergePR
 		return domain.MergePRResponse{}, fmt.Errorf("rows iteration error: %w", err)
 	}
 
-	if !found {
+	if len(resp.PR.Reviewers) == 0 {
 		return domain.MergePRResponse{}, domain.ErrNotFound
 	}
 
@@ -246,11 +242,7 @@ func (r *repository) Reassign(ctx context.Context, prID, userID string) (domain.
 		ReplacedBy: newID,
 	}
 
-	found := false
-
 	for rows.Next() {
-		found = true
-
 		var (
 			name       string
 			authorID   string
@@ -272,7 +264,7 @@ func (r *repository) Reassign(ctx context.Context, prID, userID string) (domain.
 		return domain.ReassignPRResponse{}, fmt.Errorf("rows iteration error: %w", err)
 	}
 
-	if !found {
+	if len(resp.PR.Reviewers) == 0 {
 		return domain.ReassignPRResponse{}, domain.ErrNotFound
 	}
 

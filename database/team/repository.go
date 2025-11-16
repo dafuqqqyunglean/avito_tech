@@ -46,7 +46,8 @@ func (r *repository) CreateTeam(ctx context.Context, teamName string, members []
 	err = tx.QueryRow(ctx, createTeam, teamName).Scan(&teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.TeamRequest{}, domain.ErrTeamExists
-	} else if err != nil {
+	}
+	if err != nil {
 		return domain.TeamRequest{}, fmt.Errorf("failed to create team: %w", err)
 	}
 
