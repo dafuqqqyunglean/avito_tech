@@ -42,10 +42,10 @@ func (s *impl) SetActive(ctx context.Context, req domain.SetActiveRequest) (doma
 	}
 
 	slog.Info("user active status updated",
-		"user_id", user.UserID,
-		"username", user.Username,
-		"is_active", user.IsActive,
-		"team", user.TeamName)
+		"user_id", user.User.UserID,
+		"username", user.User.Username,
+		"is_active", user.User.IsActive,
+		"team", user.User.TeamName)
 
 	return user, nil
 }

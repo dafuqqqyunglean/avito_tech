@@ -36,9 +36,9 @@ func (r *repository) SetActive(ctx context.Context, userID string, isActive bool
 	var user domain.SetActiveResponse
 	err := r.db.QueryRow(ctx, setUserActive,
 		userID,
-		isActive).Scan(&user.UserID,
-		&user.Username,
-		&user.IsActive)
+		isActive).Scan(&user.User.UserID,
+		&user.User.Username,
+		&user.User.IsActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SetActiveResponse{}, domain.ErrNotFound
 	}
@@ -47,7 +47,7 @@ func (r *repository) SetActive(ctx context.Context, userID string, isActive bool
 	}
 
 	err = r.db.QueryRow(ctx, getTeamName,
-		userID).Scan(&user.TeamName)
+		userID).Scan(&user.User.TeamName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SetActiveResponse{}, domain.ErrNotFound
 	}

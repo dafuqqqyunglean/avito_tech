@@ -18,6 +18,10 @@ func WriteResponse(w http.ResponseWriter, statusCode int, data any) error {
 }
 
 type SetActiveResponse struct {
+	User setActiveUser `json:"user"`
+}
+
+type setActiveUser struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
 	TeamName string `json:"team_name"`
