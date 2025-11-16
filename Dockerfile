@@ -1,13 +1,14 @@
-FROM golang:1.25.0-alpine
-
-RUN go version
-
-ENV GOPATH=/
-
-COPY . .
-
+FROM golang:1.25.0-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
 RUN go mod download
+COPY . .
+RUN go build -o server ./cmd
 
-RUN go build -o app ./cmd
+FROM alpine:latest
+WORKDIR /
+COPY --from=builder /src/server ./server
+COPY ./migrations ./migrations
+COPY ./.env .env
 
-CMD ["./app"]
+CMD ["./server"]

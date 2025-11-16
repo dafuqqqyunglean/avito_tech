@@ -17,6 +17,7 @@ import (
 	teamserv "github.com/dafuqqqyunglean/avito_tech/service/team"
 	userserv "github.com/dafuqqqyunglean/avito_tech/service/user"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 	"github.com/pressly/goose/v3"
 )
@@ -62,14 +63,13 @@ func (a *App) Run() error {
 
 	a.initService(ctx, pool, server)
 
-	go func() {
-		if err := server.Run(); err != nil {
-			slog.Error("error occured while running http server", "error", err)
-			os.Exit(1)
-		}
-	}()
-
 	slog.Info("server running")
+
+	if err := server.Run(); err != nil {
+		slog.Error("error occured while running http server", "error", err)
+		return err
+	}
+
 	return nil
 }
 

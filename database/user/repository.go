@@ -55,13 +55,11 @@ func (r *repository) SetActive(ctx context.Context, req domain.SetActiveRequest)
 
 func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetReviewResponse, error) {
 	rows, err := r.db.Query(ctx, `
-	SELECT id, name, author_id, status
-	FROM pull_request pr
-	JOIN pr_reviewers rw ON pr.id = rw.pr_id
-	WHERE rw.user_id = $1;`, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.GetReviewResponse{}, domain.ErrNotFound
-	} else if err != nil {
+        SELECT pr.id, pr.name, pr.author_id, pr.status
+        FROM pull_requests pr
+        JOIN pr_reviewers rw ON pr.id = rw.pr_id
+        WHERE rw.user_id = $1;`, userID)
+	if err != nil {
 		return domain.GetReviewResponse{}, fmt.Errorf("failed to get user reviews: %w", err)
 	}
 	defer rows.Close()
@@ -71,15 +69,15 @@ func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetRe
 		PullRequests: []domain.CutPullRequest{},
 	}
 
-	for rows.Next() {
-		var prID string
-		var prName string
-		var authorID string
-		var status string
+	found := false
 
-		err := rows.Scan(&prID, &prName, &authorID, &status)
-		if err != nil {
-			return domain.GetReviewResponse{}, fmt.Errorf("failed scan to pull request: %w", err)
+	for rows.Next() {
+		found = true
+
+		var prID, prName, authorID, status string
+
+		if err := rows.Scan(&prID, &prName, &authorID, &status); err != nil {
+			return domain.GetReviewResponse{}, fmt.Errorf("failed to scan pull request: %w", err)
 		}
 
 		response.PullRequests = append(response.PullRequests, domain.CutPullRequest{
@@ -88,6 +86,14 @@ func (r *repository) GetReview(ctx context.Context, userID string) (domain.GetRe
 			AuthorID: authorID,
 			Status:   status,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return domain.GetReviewResponse{}, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	if !found {
+		return domain.GetReviewResponse{}, domain.ErrNotFound
 	}
 
 	return response, nil

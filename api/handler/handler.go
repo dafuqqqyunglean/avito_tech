@@ -156,6 +156,8 @@ func CreatePullRequest(ctx context.Context, service prserv.Service) http.Handler
 				domain.NewErrorResponse(ctx, w, domain.ErrNotFound, http.StatusNotFound)
 			case errors.Is(err, domain.ErrBadRequest):
 				domain.NewErrorResponse(ctx, w, domain.ErrBadRequest, http.StatusBadRequest)
+			case errors.Is(err, domain.ErrPRExists):
+				domain.NewErrorResponse(ctx, w, domain.ErrPRExists, http.StatusConflict)
 			default:
 				slog.Error("failed create pull request", "error", err)
 				domain.NewErrorResponse(ctx, w, domain.ErrInternal, http.StatusInternalServerError)
@@ -176,7 +178,7 @@ func CreatePullRequest(ctx context.Context, service prserv.Service) http.Handler
 func SetMerged(ctx context.Context, service prserv.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req domain.SetMergedRequest
-		if err := json.NewDecoder(r.Body).Decode(&req.PrID); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to decode set merged request", "error", err)
 			domain.NewErrorResponse(ctx, w, domain.ErrBadRequest, http.StatusBadRequest)
 
@@ -210,7 +212,7 @@ func SetMerged(ctx context.Context, service prserv.Service) http.HandlerFunc {
 func Reassign(ctx context.Context, service prserv.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req domain.ReassignRequest
-		if err := json.NewDecoder(r.Body).Decode(&req.PrID); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to decode reassign request", "error", err)
 			domain.NewErrorResponse(ctx, w, domain.ErrBadRequest, http.StatusBadRequest)
 
@@ -224,6 +226,8 @@ func Reassign(ctx context.Context, service prserv.Service) http.HandlerFunc {
 				domain.NewErrorResponse(ctx, w, domain.ErrNotFound, http.StatusNotFound)
 			case errors.Is(err, domain.ErrBadRequest):
 				domain.NewErrorResponse(ctx, w, domain.ErrBadRequest, http.StatusBadRequest)
+			case errors.Is(err, domain.ErrPRMerged):
+				domain.NewErrorResponse(ctx, w, domain.ErrPRMerged, http.StatusBadRequest)
 			default:
 				slog.Error("failed to reassign reviewer", "error", err)
 				domain.NewErrorResponse(ctx, w, domain.ErrInternal, http.StatusInternalServerError)

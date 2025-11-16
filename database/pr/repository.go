@@ -2,6 +2,7 @@ package prrepo
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -41,9 +42,10 @@ func (r *repository) Create(ctx context.Context, pr domain.CreatePRRequest) (dom
 
 	var teamName string
 	err = r.db.QueryRow(ctx, `
-	SELECT name FROM teams t
-	JOIN team_members tm ON t.id = tm.team_id
-	WHERE tm.user_id = $1;`, pr.AuthorID).Scan(&teamName)
+        SELECT t.name 
+        FROM teams t
+        JOIN team_members tm ON t.id = tm.team_id
+        WHERE tm.user_id = $1;`, pr.AuthorID).Scan(&teamName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.CreatePRResponse{}, domain.ErrNotFound
 	} else if err != nil {
@@ -51,18 +53,18 @@ func (r *repository) Create(ctx context.Context, pr domain.CreatePRRequest) (dom
 	}
 
 	rows, err := r.db.Query(ctx, `
-	SELECT user_id FROM team_members tm
-	JOIN team t ON tm.team_id = t.id
-	JOIN users u ON tm.user_id = u.id
-	WHERE user_id != $1
-	AND t.name = $2
-	AND u.is_active = true
-	LIMIT 2;`, pr.AuthorID, teamName)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.CreatePRResponse{}, domain.ErrNotFound
-	} else if err != nil {
-		return domain.CreatePRResponse{}, fmt.Errorf("failed to get user team: %w", err)
+        SELECT u.id 
+        FROM team_members tm
+        JOIN teams t ON tm.team_id = t.id
+        JOIN users u ON tm.user_id = u.id
+        WHERE u.id != $1
+          AND t.name = $2
+          AND u.is_active = true
+        LIMIT 2;`, pr.AuthorID, teamName)
+	if err != nil {
+		return domain.CreatePRResponse{}, fmt.Errorf("failed to get reviewers: %w", err)
 	}
+	defer rows.Close()
 
 	resp := domain.CreatePRResponse{
 		PR: domain.PullRequest{
@@ -76,12 +78,19 @@ func (r *repository) Create(ctx context.Context, pr domain.CreatePRRequest) (dom
 
 	for rows.Next() {
 		var userID string
-		err := rows.Scan(&userID)
-		if err != nil {
+		if err := rows.Scan(&userID); err != nil {
 			return domain.CreatePRResponse{}, fmt.Errorf("scan team member: %w", err)
 		}
 
 		resp.PR.Reviewers = append(resp.PR.Reviewers, userID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return domain.CreatePRResponse{}, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	if len(resp.PR.Reviewers) == 0 {
+		return domain.CreatePRResponse{}, domain.ErrNotFound
 	}
 
 	tx, err := r.db.Begin(ctx)
@@ -91,18 +100,18 @@ func (r *repository) Create(ctx context.Context, pr domain.CreatePRRequest) (dom
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-	INSERT (id, name, author_id, status) 
-	INTO pull_requests
-	VALUES ($1, $2, $3, $4)
-	ON CONFLICT (id) DO NOTHING;`, resp.PR.ID, resp.PR.Name, resp.PR.AuthorID, resp.PR.Status)
+        INSERT INTO pull_requests (id, name, author_id, status)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (id) DO NOTHING;`,
+		resp.PR.ID, resp.PR.Name, resp.PR.AuthorID, resp.PR.Status)
 	if err != nil {
 		return domain.CreatePRResponse{}, fmt.Errorf("failed to save pr to database: %w", err)
 	}
 
 	for _, reviewerID := range resp.PR.Reviewers {
 		_, err := tx.Exec(ctx, `
-        INSERT INTO pr_reviewers (pr_id, user_id) 
-        VALUES ($1, $2)`,
+            INSERT INTO pr_reviewers (pr_id, user_id) 
+            VALUES ($1, $2);`,
 			resp.PR.ID, reviewerID)
 		if err != nil {
 			return domain.CreatePRResponse{}, fmt.Errorf("failed to assign reviewer %s: %w", reviewerID, err)
@@ -110,31 +119,48 @@ func (r *repository) Create(ctx context.Context, pr domain.CreatePRRequest) (dom
 	}
 
 	if err = tx.Commit(ctx); err != nil {
-		return domain.CreatePRResponse{}, fmt.Errorf("transction uncommited: %w", err)
+		return domain.CreatePRResponse{}, fmt.Errorf("transaction uncommitted: %w", err)
 	}
 
 	return resp, nil
 }
 
 func (r *repository) SetMerged(ctx context.Context, prID string) (domain.MergePRResponse, error) {
-	result, err := r.db.Exec(ctx, `
-	UPDATE pull_requests
-	SET status = "MERGED", merged_at = $2
-	WHERE id = $1 AND status != 'MERGED`, prID, time.Now())
-	if err != nil {
-		return domain.MergePRResponse{}, fmt.Errorf("failed to set pr status = merged %s: %w", prID, err)
-	}
-	if result.RowsAffected() == 0 {
+	// 1. Узнаём текущий статус PR
+	var status string
+	var mergedAt sql.NullTime
+
+	err := r.db.QueryRow(ctx, `
+        SELECT status, merged_at
+        FROM pull_requests
+        WHERE id = $1;`, prID).Scan(&status, &mergedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.MergePRResponse{}, domain.ErrNotFound
+	} else if err != nil {
+		return domain.MergePRResponse{}, fmt.Errorf("failed to get pr status %s: %w", prID, err)
+	}
+
+	now := time.Now()
+
+	if status != "MERGED" {
+		_, err := r.db.Exec(ctx, `
+            UPDATE pull_requests
+            SET status = 'MERGED', merged_at = $2
+            WHERE id = $1;`, prID, now)
+		if err != nil {
+			return domain.MergePRResponse{}, fmt.Errorf("failed to set pr status = merged %s: %w", prID, err)
+		}
+
+		status = "MERGED"
 	}
 
 	rows, err := r.db.Query(ctx, `
-	SELECT name, author_id, status, user_id, merged_at
-	FROM pull_requests pr
-	JOIN pr_reviewers rv ON pr.id = rv.pr_id
-	WHERE pr.id = $1;`, prID)
+        SELECT pr.name, pr.author_id, pr.status, rv.user_id, pr.merged_at
+        FROM pull_requests pr
+        JOIN pr_reviewers rv ON pr.id = rv.pr_id
+        WHERE pr.id = $1;`, prID)
 	if err != nil {
-
+		return domain.MergePRResponse{}, fmt.Errorf("failed to load merged pr %s: %w", prID, err)
 	}
 	defer rows.Close()
 
@@ -144,21 +170,37 @@ func (r *repository) SetMerged(ctx context.Context, prID string) (domain.MergePR
 			Reviewers: []string{},
 		},
 	}
-	for rows.Next() {
-		var name string
-		var authorID string
-		var status string
-		var reviewerID string
 
-		err := rows.Scan(&name, &authorID, &status, &reviewerID, &resp.MergedAt)
-		if err != nil {
+	found := false
+
+	for rows.Next() {
+		found = true
+
+		var (
+			name       string
+			authorID   string
+			prStatus   string
+			reviewerID string
+			dbMergedAt time.Time
+		)
+
+		if err := rows.Scan(&name, &authorID, &prStatus, &reviewerID, &dbMergedAt); err != nil {
 			return domain.MergePRResponse{}, fmt.Errorf("scan pull request error: %w", err)
 		}
 
 		resp.PR.Name = name
 		resp.PR.AuthorID = authorID
-		resp.PR.Status = status
+		resp.PR.Status = prStatus
 		resp.PR.Reviewers = append(resp.PR.Reviewers, reviewerID)
+		resp.MergedAt = dbMergedAt
+	}
+
+	if err := rows.Err(); err != nil {
+		return domain.MergePRResponse{}, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	if !found {
+		return domain.MergePRResponse{}, domain.ErrNotFound
 	}
 
 	return resp, nil
@@ -167,9 +209,9 @@ func (r *repository) SetMerged(ctx context.Context, prID string) (domain.MergePR
 func (r *repository) Reassign(ctx context.Context, prID, userID string) (domain.ReassignPRResponse, error) {
 	var status string
 	err := r.db.QueryRow(ctx, `
-	SELECT status FROM pull_requests
-	WHERE id = $1`, prID).Scan(&status)
-	if err == pgx.ErrNoRows {
+        SELECT status FROM pull_requests
+        WHERE id = $1;`, prID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ReassignPRResponse{}, domain.ErrNotFound
 	} else if err != nil {
 		return domain.ReassignPRResponse{}, fmt.Errorf("failed to get pr status: %w", err)
@@ -181,58 +223,78 @@ func (r *repository) Reassign(ctx context.Context, prID, userID string) (domain.
 
 	var newID string
 	err = r.db.QueryRow(ctx, `
-	UPDATE pr_reviewers 
-	SET pr_id = (
-	SELECT u.id 
-    FROM users u
-    JOIN team_members tm ON u.id = tm.user_id
-    JOIN team_members old_tm ON tm.team_id = old_tm.team_id
-    WHERE old_tm.user_id = $2
-    AND u.id != $2
-    AND u.is_active = true
-    AND u.id NOT IN (
-        SELECT user_id 
-        FROM pr_reviewers 
-        WHERE pr_id = $1
-    )
-    LIMIT 1)
-	WHERE pr_id = $1 AND user_id = $2`, prID, userID).Scan(&newID)
-	if err != nil {
+        UPDATE pr_reviewers 
+        SET user_id = (
+            SELECT u.id 
+            FROM users u
+            JOIN team_members tm ON u.id = tm.user_id
+            JOIN team_members old_tm ON tm.team_id = old_tm.team_id
+            WHERE old_tm.user_id = $2
+              AND u.id != $2
+              AND u.is_active = true
+              AND u.id NOT IN (
+                  SELECT user_id 
+                  FROM pr_reviewers 
+                  WHERE pr_id = $1
+              )
+            LIMIT 1
+        )
+        WHERE pr_id = $1 AND user_id = $2
+        RETURNING user_id;`,
+		prID, userID,
+	).Scan(&newID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ReassignPRResponse{}, domain.ErrNotFound
+	} else if err != nil {
 		return domain.ReassignPRResponse{}, fmt.Errorf("failed to update pr reviewer: %w", err)
 	}
 
 	rows, err := r.db.Query(ctx, `
-	SELECT name, author_id, status, user_id
-	FROM pull_requests pr
-	JOIN pr_reviewers rv ON pr.id = rv.pr_id
-	WHERE pr.id = $1`, prID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ReassignPRResponse{}, domain.ErrNotFound
-	} else if err != nil {
-		return domain.ReassignPRResponse{}, fmt.Errorf("team has no reviewers: %w", err)
+        SELECT pr.name, pr.author_id, pr.status, rv.user_id
+        FROM pull_requests pr
+        JOIN pr_reviewers rv ON pr.id = rv.pr_id
+        WHERE pr.id = $1;`, prID)
+	if err != nil {
+		return domain.ReassignPRResponse{}, fmt.Errorf("failed to load pr reviewers: %w", err)
 	}
+	defer rows.Close()
 
 	resp := domain.ReassignPRResponse{
 		PR: domain.PullRequest{
-			ID: prID,
+			ID:        prID,
+			Reviewers: []string{},
 		},
 		ReplacedBy: newID,
 	}
-	for rows.Next() {
-		var name string
-		var authorID string
-		var status string
-		var reviewerID string
 
-		err := rows.Scan(&name, &authorID, &status, &reviewerID)
-		if err != nil {
+	found := false
+
+	for rows.Next() {
+		found = true
+
+		var (
+			name       string
+			authorID   string
+			prStatus   string
+			reviewerID string
+		)
+
+		if err := rows.Scan(&name, &authorID, &prStatus, &reviewerID); err != nil {
 			return domain.ReassignPRResponse{}, fmt.Errorf("scan pull request error: %w", err)
 		}
 
 		resp.PR.Name = name
 		resp.PR.AuthorID = authorID
-		resp.PR.Status = status
+		resp.PR.Status = prStatus
 		resp.PR.Reviewers = append(resp.PR.Reviewers, reviewerID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return domain.ReassignPRResponse{}, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	if !found {
+		return domain.ReassignPRResponse{}, domain.ErrNotFound
 	}
 
 	return resp, nil

@@ -85,9 +85,7 @@ func (r *repository) GetTeam(ctx context.Context, teamName string) (domain.TeamR
          JOIN users u ON tm.user_id = u.id
          WHERE t.name = $1
          ORDER BY u.id;`, teamName)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.TeamRequest{}, domain.ErrNotFound
-	} else if err != nil {
+	if err != nil {
 		return domain.TeamRequest{}, fmt.Errorf("failed to query team: %w", err)
 	}
 	defer rows.Close()
@@ -97,13 +95,16 @@ func (r *repository) GetTeam(ctx context.Context, teamName string) (domain.TeamR
 		Members:  []domain.User{},
 	}
 
+	found := false
+
 	for rows.Next() {
+		found = true
+
 		var userID string
 		var username string
 		var isActive bool
 
-		err := rows.Scan(&userID, &username, &isActive)
-		if err != nil {
+		if err := rows.Scan(&userID, &username, &isActive); err != nil {
 			return domain.TeamRequest{}, fmt.Errorf("scan team member: %w", err)
 		}
 
@@ -112,6 +113,14 @@ func (r *repository) GetTeam(ctx context.Context, teamName string) (domain.TeamR
 			Name:     username,
 			IsActive: isActive,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return domain.TeamRequest{}, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	if !found {
+		return domain.TeamRequest{}, domain.ErrNotFound
 	}
 
 	return team, nil
