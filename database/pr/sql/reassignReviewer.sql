@@ -1,6 +1,7 @@
 UPDATE pr_reviewers 
-SET user_id = (
-    SELECT u.id 
+SET user_id = sub.new_user
+FROM (
+    SELECT u.id AS new_user
     FROM users u
     JOIN team_members tm ON u.id = tm.user_id
     JOIN team_members old_tm ON tm.team_id = old_tm.team_id
@@ -13,6 +14,8 @@ SET user_id = (
           WHERE pr_id = $1
       )
     LIMIT 1
-)
-WHERE pr_id = $1 AND user_id = $2
-RETURNING user_id;
+) AS sub
+WHERE pr_id = $1 
+  AND user_id = $2
+  AND sub.new_user IS NOT NULL
+RETURNING sub.new_user;
